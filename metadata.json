@@ -1,0 +1,8 @@
+{
+  "name": "Remix Evaluaciones",
+  "description": "Dashboard de Evaluaciones y Tablero de Seguridad de Estaciones con importación y exportación de archivos Excel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
