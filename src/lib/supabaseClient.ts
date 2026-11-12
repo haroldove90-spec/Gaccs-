@@ -9,8 +9,7 @@ export const SUPABASE_CONFIG = {
   projectId: 'yybannuorhqsykqagkwz',
   url: 'https://yybannuorhqsykqagkwz.supabase.co',
   restUrl: 'https://yybannuorhqsykqagkwz.supabase.co/rest/v1/',
-  anonKey:
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5YmFubnVvcmhxc3lrcWFna3d6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzMDA5OTksImV4cCI6MjEwNjg3Njk5OX0.orSuqIJBh1w6VrLuAkgS9mRTlBs8qR8LQwlJkmwhJrY',
+  anonKey: 'sb_publishable_KZ8eHozeaRkHz3-IJWlM-w_9Ix2xx63',
   dashboardUrl: 'https://supabase.com/dashboard/project/yybannuorhqsykqagkwz',
   credentials: {
     user: 'gaccs@appdesignsoftware.com',
@@ -176,7 +175,12 @@ export async function fetchSupabaseEvaluationRecords(): Promise<{
       mes: row.mes,
       anio: Number(row.anio) || 2026,
       punto: row.punto || '',
-      calificacion: isNaN(Number(row.calificacion)) ? row.calificacion : Number(row.calificacion),
+      calificacion:
+        row.calificacion === '' || row.calificacion === null || row.calificacion === undefined
+          ? ''
+          : isNaN(Number(row.calificacion))
+          ? row.calificacion
+          : Number(row.calificacion),
       rubroId: row.rubro_id ? Number(row.rubro_id) : undefined,
       observaciones: row.observaciones || undefined,
       evidencias: Array.isArray(row.evidencias) ? row.evidencias : [],
@@ -365,7 +369,7 @@ export async function syncRecordsToSupabase(
           mes: String(rec.mes || 'SEPTIEMBRE').trim(),
           anio: safeYear,
           punto: String(rec.punto || 'Punto').trim(),
-          calificacion: String(rec.calificacion ?? '0').trim(),
+          calificacion: String(rec.calificacion ?? '').trim(),
           rubro_id: rec.rubroId || null,
           observaciones: rec.observaciones || null,
           evidencias: Array.isArray(rec.evidencias) ? rec.evidencias : [],
@@ -640,7 +644,12 @@ export async function fetchSupabasePlantEvaluationRecords(): Promise<{
       mes: row.mes,
       anio: Number(row.anio) || 2026,
       punto: row.punto || '',
-      calificacion: isNaN(Number(row.calificacion)) ? row.calificacion : Number(row.calificacion),
+      calificacion:
+        row.calificacion === '' || row.calificacion === null || row.calificacion === undefined
+          ? ''
+          : isNaN(Number(row.calificacion))
+          ? row.calificacion
+          : Number(row.calificacion),
       rubroId: row.rubro_id ? Number(row.rubro_id) : undefined,
       observaciones: row.observaciones || undefined,
       evidencias: Array.isArray(row.evidencias) ? row.evidencias : [],
@@ -764,7 +773,7 @@ export async function syncPlantRecordsToSupabase(
           mes: String(rec.mes || 'SEPTIEMBRE').trim(),
           anio: safeYear,
           punto: String(rec.punto || 'Punto').trim(),
-          calificacion: String(rec.calificacion ?? '0').trim(),
+          calificacion: String(rec.calificacion ?? '').trim(),
           rubro_id: rec.rubroId || null,
           observaciones: rec.observaciones || null,
           evidencias: Array.isArray(rec.evidencias) ? rec.evidencias : [],

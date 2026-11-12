@@ -1091,18 +1091,18 @@ export const SupabaseModule: React.FC<SupabaseModuleProps> = ({
             </div>
           </div>
 
-          {/* Anon Key Box */}
+          {/* Anon / Publishable Key Box */}
           <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-xl space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider block">
-                API Key Pública (anon / JWT)
+                API Key Pública (Publishable / Anon Key)
               </span>
               <button
                 type="button"
-                onClick={() => handleCopy(SUPABASE_CONFIG.anonKey, 'Anon Key')}
+                onClick={() => handleCopy(SUPABASE_CONFIG.anonKey, 'API Key')}
                 className="inline-flex items-center gap-1 text-xs text-neutral-700 hover:text-neutral-950 font-medium"
               >
-                {copiedKey === 'Anon Key' ? (
+                {copiedKey === 'API Key' ? (
                   <>
                     <Check className="w-3.5 h-3.5 text-emerald-600" />
                     <span className="text-emerald-700 font-semibold">Copiada</span>
@@ -1123,7 +1123,7 @@ export const SupabaseModule: React.FC<SupabaseModuleProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 4: SCRIPT SQL PARA CORRER EN SUPABASE (SOLICITADO POR EL USUARIO)       */}
+      {/* TAB 4: SCRIPT SQL PARA CORRER EN SUPABASE (SIN BORRAR REGISTROS)          */}
       {/* ========================================================================= */}
       {activeTab === 'sql' && (
         <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-xs space-y-4">
@@ -1131,11 +1131,11 @@ export const SupabaseModule: React.FC<SupabaseModuleProps> = ({
             <div>
               <h3 className="font-bold text-neutral-900 text-base flex items-center gap-2">
                 <Code2 className="w-5 h-5 text-cyan-600" />
-                <span>Script SQL de Inicialización y Registros de Muestra</span>
+                <span>Script SQL de Actualización Segura (Sin Borrar Registros)</span>
               </h3>
               <p className="text-xs text-neutral-500">
-                Ejecuta este código en el <strong>SQL Editor</strong> de Supabase para crear las tablas,
-                deshabilitar restricciones RLS e insertar los registros de muestra.
+                Ejecuta este código en el <strong>SQL Editor</strong> de Supabase para actualizar columnas,
+                índices y políticas conservando intactos todos tus registros existentes.
               </p>
             </div>
 
