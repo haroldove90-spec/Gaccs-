@@ -2423,7 +2423,7 @@ export const Module1Station: React.FC<Module1StationProps> = ({
           }}
           onOpenEditModal={() => {
             const item = RUBRO_ITEMS.find((r) =>
-              selectedRecordForGallery.punto.toLowerCase().includes(r.description.slice(0, 25).toLowerCase())
+              isMatchingRubroItem(selectedRecordForGallery.punto, r)
             );
             if (item) {
               handleOpenEditCell(item, selectedRecordForGallery.mes);

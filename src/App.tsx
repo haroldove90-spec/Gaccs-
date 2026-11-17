@@ -886,17 +886,20 @@ export default function App() {
   };
 
   const handleUpdateRecord = (updatedRec: StationEvaluationRecord) => {
+    const cleanUpdatedP = cleanTextForMatch(updatedRec.punto);
+    const normUpdatedM = normalizeMonthName(updatedRec.mes);
     setRecords((prev) => {
       const idx = prev.findIndex(
         (r) =>
           r.id === updatedRec.id ||
-          (r.estacion === updatedRec.estacion &&
-            r.mes === updatedRec.mes &&
-            r.punto.toLowerCase().includes(updatedRec.punto.slice(0, 25).toLowerCase()))
+          (isSameStation(r.estacion, updatedRec.estacion) &&
+            normalizeMonthName(r.mes) === normUpdatedM &&
+            (!updatedRec.anio || !r.anio || Number(r.anio) === Number(updatedRec.anio)) &&
+            cleanTextForMatch(r.punto) === cleanUpdatedP)
       );
       if (idx !== -1) {
         const next = [...prev];
-        next[idx] = updatedRec;
+        next[idx] = { ...updatedRec, id: prev[idx].id };
         return next;
       }
       return [updatedRec, ...prev];
@@ -1072,7 +1075,10 @@ export default function App() {
                 anio: newR.anio || updatedList[existingIdx].anio,
                 concatenar: newR.concatenar || updatedList[existingIdx].concatenar,
                 ciudad: newR.ciudad || updatedList[existingIdx].ciudad,
-                observaciones: newR.observaciones || updatedList[existingIdx].observaciones,
+                observaciones:
+                  newR.observaciones !== undefined
+                    ? newR.observaciones
+                    : updatedList[existingIdx].observaciones,
               };
               updatedList[existingIdx] = merged;
               toSync.push(merged);
@@ -1184,7 +1190,10 @@ export default function App() {
                 anio: newR.anio || updatedList[existingIdx].anio,
                 concatenar: newR.concatenar || updatedList[existingIdx].concatenar,
                 ciudad: newR.ciudad || updatedList[existingIdx].ciudad,
-                observaciones: newR.observaciones || updatedList[existingIdx].observaciones,
+                observaciones:
+                  newR.observaciones !== undefined
+                    ? newR.observaciones
+                    : updatedList[existingIdx].observaciones,
               };
               updatedList[existingIdx] = merged;
               toSync.push(merged);
@@ -1380,6 +1389,10 @@ export default function App() {
             anio: newR.anio || updatedList[existingIdx].anio,
             concatenar: newR.concatenar || updatedList[existingIdx].concatenar,
             ciudad: newR.ciudad || updatedList[existingIdx].ciudad,
+            observaciones:
+              newR.observaciones !== undefined
+                ? newR.observaciones
+                : updatedList[existingIdx].observaciones,
           };
         } else {
           updatedList.unshift(newR);
@@ -1485,17 +1498,20 @@ export default function App() {
   };
 
   const handleUpdatePlantRecord = (updatedRec: StationEvaluationRecord) => {
+    const cleanUpdatedP = cleanTextForMatch(updatedRec.punto);
+    const normUpdatedM = normalizeMonthName(updatedRec.mes);
     setPlantRecords((prev) => {
       const idx = prev.findIndex(
         (r) =>
           r.id === updatedRec.id ||
-          (r.estacion === updatedRec.estacion &&
-            r.mes === updatedRec.mes &&
-            r.punto.toLowerCase().includes(updatedRec.punto.slice(0, 25).toLowerCase()))
+          (isSameStation(r.estacion, updatedRec.estacion) &&
+            normalizeMonthName(r.mes) === normUpdatedM &&
+            (!updatedRec.anio || !r.anio || Number(r.anio) === Number(updatedRec.anio)) &&
+            cleanTextForMatch(r.punto) === cleanUpdatedP)
       );
       if (idx !== -1) {
         const next = [...prev];
-        next[idx] = updatedRec;
+        next[idx] = { ...updatedRec, id: prev[idx].id };
         return next;
       }
       return [updatedRec, ...prev];

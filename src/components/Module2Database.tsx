@@ -4,7 +4,7 @@ import { exportModule2ToExcel } from '../utils/excelUtils';
 import { EvidenceGalleryModal } from './EvidenceGalleryModal';
 import { RecordTimerBadge } from './RecordTimerBadge';
 import { RUBRO_ITEMS } from '../data/initialData';
-import { getScoreCellFormat } from '../utils/evaluationFormulas';
+import { getScoreCellFormat, isMatchingRubroItem } from '../utils/evaluationFormulas';
 import {
   Download,
   Upload,
@@ -907,7 +907,7 @@ export const Module2Database: React.FC<Module2DatabaseProps> = ({
                       <td className="py-2.5 px-3 text-center font-mono tabular-nums">
                         {(() => {
                           const matchItem = RUBRO_ITEMS.find((it) =>
-                            r.punto.toLowerCase().includes(it.description.slice(0, 25).toLowerCase())
+                            isMatchingRubroItem(r.punto, it)
                           );
                           const maxPts = matchItem ? matchItem.maxPoints : 5;
                           const cellFmt = getScoreCellFormat(r.calificacion, maxPts, matchItem?.isInformative);

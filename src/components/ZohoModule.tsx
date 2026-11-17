@@ -115,73 +115,10 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
     return initial;
   });
 
-  // Track save status for each individual card
+  // Track save status for each individual card and active audit ID
   const [savedCards, setSavedCards] = useState<Record<number, boolean>>({});
+  const [activeAuditId, setActiveAuditId] = useState<string | null>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<string>('Guardado');
-
-  // Auto-save draft on every change to itemsData, station, or period
-  useEffect(() => {
-    try {
-      localStorage.setItem('evaluaciones_zoho_active_draft', JSON.stringify(itemsData));
-      setAutoSaveStatus('⚡ Guardado automáticamente');
-    } catch (e) {
-      console.error('Auto-save error:', e);
-    }
-  }, [itemsData, selectedStation, mes, anio]);
-
-  // Handler for saving a single card/item
-  const handleSaveSingleCard = async (item: ZohoChecklistItemDef) => {
-    const effectiveStation = isAddingNewStation ? customStationName.trim() : selectedStation.trim();
-    if (!effectiveStation) {
-      showToast('Por favor selecciona o escribe el nombre de la estación antes de guardar.');
-      return;
-    }
-
-    const current = itemsData[item.index] || { calificacion: '', observaciones: '' };
-    const califValue = current.calificacion === '' ? 0 : current.calificacion;
-
-    const singleRec: StationEvaluationRecord = {
-      id: `eval_zh_${effectiveStation.replace(/[^a-zA-Z0-9_-]/g, '_')}_${mes}_${item.index}`,
-      concatenar: `${effectiveStation}${mes}${item.punto}`,
-      ciudad: ciudad || 'Sinaloa - Mochis',
-      estacion: effectiveStation,
-      mes: mes,
-      anio: anio,
-      punto: item.punto,
-      calificacion: califValue,
-      observaciones: current.observaciones || '',
-      rubroId: item.rubroId,
-      inspectorSubmittedAt: new Date().toISOString(),
-      inspectorUser: auditor || user.name || user.username || 'Auditor',
-    };
-
-    // 1. Guardar en memoria de App.tsx
-    if (onUpdateRecord) {
-      onUpdateRecord(singleRec);
-    }
-
-    // 2. Guardar en Supabase directamente
-    try {
-      await saveRecordToSupabase(singleRec);
-    } catch (e) {
-      console.error(e);
-    }
-
-    // 3. Persistir borrador
-    try {
-      localStorage.setItem('evaluaciones_zoho_active_draft', JSON.stringify(itemsData));
-    } catch (e) {
-      console.error(e);
-    }
-
-    // 4. Feedback visual en la tarjeta
-    setSavedCards((prev) => ({ ...prev, [item.index]: true }));
-    setTimeout(() => {
-      setSavedCards((prev) => ({ ...prev, [item.index]: false }));
-    }, 2500);
-
-    showToast(`✓ Punto ${item.id} guardado correctamente (${califValue} pts).`);
-  };
 
   // Collapsible sections state
   const [collapsedRubros, setCollapsedRubros] = useState<Record<number, boolean>>({});
@@ -199,6 +136,184 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
     }
     return [];
   });
+
+  // Auto-save draft on every change to itemsData, station, or period
+  useEffect(() => {
+    try {
+      localStorage.setItem('evaluaciones_zoho_active_draft', JSON.stringify(itemsData));
+      setAutoSaveStatus('⚡ Guardado automáticamente');
+    } catch (e) {
+      console.error('Auto-save error:', e);
+    }
+  }, [itemsData, selectedStation, mes, anio]);
+
+  // Helper to build a ZohoAuditRecord from any itemsData snapshot
+  const buildAuditRecordFromItems = (
+    sourceItems: typeof itemsData,
+    effectiveStation: string,
+    existingId?: string | null
+  ): ZohoAuditRecord => {
+    let obtainedPoints = 0;
+    let maxApplicablePoints = 0;
+    let obsCount = 0;
+
+    const auditItems: ZohoAuditItem[] = ZOHO_CHECKLIST_ITEMS.map((def) => {
+      const userEntry = sourceItems[def.index] || {
+        calificacion: def.isInformative ? (def.defaultScore ?? '') : '',
+        observaciones: '',
+      };
+      const obsTrimmed = (userEntry.observaciones || '').trim();
+      if (obsTrimmed.length > 0) {
+        obsCount++;
+      }
+
+      const calif = userEntry.calificacion !== undefined && userEntry.calificacion !== null ? userEntry.calificacion : '';
+      if (!def.isInformative && def.maxPoints > 0) {
+        if (calif !== 'N/A' && calif !== '') {
+          maxApplicablePoints += def.maxPoints;
+          const num = typeof calif === 'number' ? calif : parseFloat(String(calif));
+          if (!isNaN(num)) {
+            obtainedPoints += Math.min(def.maxPoints, Math.max(0, num));
+          }
+        }
+      }
+
+      return {
+        puntoIndex: def.index,
+        id: def.id,
+        rubroId: def.rubroId,
+        rubroName: def.rubroName,
+        punto: def.punto,
+        calificacion: calif,
+        observaciones: obsTrimmed,
+        maxPoints: def.maxPoints,
+        isInformative: def.isInformative,
+      };
+    });
+
+    const pct =
+      maxApplicablePoints > 0
+        ? Math.round((obtainedPoints / maxApplicablePoints) * 1000) / 10
+        : 100;
+
+    let estatus: 'Cumple' | 'Observación' | 'Crítico' = 'Cumple';
+    if (pct < 70) estatus = 'Crítico';
+    else if (pct < 85) estatus = 'Observación';
+
+    return {
+      id: existingId || `zoho-aud-${Date.now()}`,
+      fecha,
+      hora,
+      auditor: auditor.trim() || user.name || user.username || 'Auditor',
+      estacion: effectiveStation,
+      ciudad: ciudad.trim() || 'Sinaloa',
+      mes,
+      anio,
+      overallScore: pct,
+      estatus,
+      observacionesCount: obsCount,
+      items: auditItems,
+      createdAt: new Date().toISOString(),
+    };
+  };
+
+  // Upsert audit in auditsHistory + localStorage
+  const upsertAuditHistory = (auditRecord: ZohoAuditRecord) => {
+    setAuditsHistory((prev) => {
+      const matchIdx = prev.findIndex(
+        (a) =>
+          a.id === auditRecord.id ||
+          (a.estacion.trim().toLowerCase() === auditRecord.estacion.trim().toLowerCase() &&
+            a.mes === auditRecord.mes &&
+            a.anio === auditRecord.anio)
+      );
+      let next: ZohoAuditRecord[];
+      if (matchIdx !== -1) {
+        next = [...prev];
+        next[matchIdx] = { ...auditRecord, id: prev[matchIdx].id };
+      } else {
+        next = [auditRecord, ...prev];
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY_AUDITS, JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  // Handler for saving a single card/item
+  const handleSaveSingleCard = async (item: ZohoChecklistItemDef) => {
+    const effectiveStation = isAddingNewStation ? customStationName.trim() : selectedStation.trim();
+    if (!effectiveStation) {
+      showToast('Por favor selecciona o escribe el nombre de la estación antes de guardar.');
+      return;
+    }
+
+    const current = itemsData[item.index] || { calificacion: '', observaciones: '' };
+    const califValue =
+      current.calificacion !== undefined && current.calificacion !== null ? current.calificacion : '';
+    const obsValue = (current.observaciones || '').trim();
+
+    const singleRec: StationEvaluationRecord = {
+      id: `eval_zh_${effectiveStation.replace(/[^a-zA-Z0-9_-]/g, '_')}_${mes}_${anio}_${item.index}`,
+      concatenar: `${effectiveStation}${mes}${item.punto}`,
+      ciudad: ciudad || 'Sinaloa - Mochis',
+      estacion: effectiveStation,
+      mes: mes,
+      anio: anio,
+      punto: item.punto,
+      calificacion: califValue,
+      observaciones: obsValue,
+      rubroId: item.rubroId,
+      inspectorSubmittedAt: new Date().toISOString(),
+      inspectorUser: auditor || user.name || user.username || 'Auditor',
+    };
+
+    // 1. Guardar en memoria de App.tsx
+    if (onUpdateRecord) {
+      onUpdateRecord(singleRec);
+    }
+
+    // 2. Guardar en Supabase directamente
+    try {
+      await saveRecordToSupabase(singleRec);
+    } catch (e) {
+      console.error(e);
+    }
+
+    // 3. Persistir borrador y sincronizar con historial de auditorías para Excel
+    const snapshot = {
+      ...itemsData,
+      [item.index]: { calificacion: califValue, observaciones: obsValue },
+    };
+    try {
+      localStorage.setItem('evaluaciones_zoho_active_draft', JSON.stringify(snapshot));
+    } catch (e) {
+      console.error(e);
+    }
+
+    const existingAudit = auditsHistory.find(
+      (a) =>
+        (activeAuditId && a.id === activeAuditId) ||
+        (a.estacion.trim().toLowerCase() === effectiveStation.toLowerCase() &&
+          a.mes === mes &&
+          a.anio === anio)
+    );
+    const syncedAudit = buildAuditRecordFromItems(snapshot, effectiveStation, existingAudit?.id || activeAuditId);
+    setActiveAuditId(syncedAudit.id);
+    upsertAuditHistory(syncedAudit);
+
+    // 4. Feedback visual en la tarjeta
+    setSavedCards((prev) => ({ ...prev, [item.index]: true }));
+    setTimeout(() => {
+      setSavedCards((prev) => ({ ...prev, [item.index]: false }));
+    }, 2500);
+
+    const scoreLabel = califValue !== '' ? `${califValue} pts` : 'Sin calificación';
+    showToast(`✓ Punto ${item.id} guardado correctamente (${scoreLabel}${obsValue ? ' · Con respuesta' : ''}).`);
+  };
 
   // History search and filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -276,27 +391,77 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
 
   // Quick actions on the form
   const handleSetAllOptimal = () => {
-    const updated: typeof itemsData = {};
-    ZOHO_CHECKLIST_ITEMS.forEach((it) => {
-      updated[it.index] = {
-        calificacion: it.defaultScore ?? (it.isInformative ? '' : it.maxPoints),
-        observaciones: itemsData[it.index]?.observaciones || '',
-      };
+    setItemsData((prev) => {
+      const updated: typeof itemsData = {};
+      ZOHO_CHECKLIST_ITEMS.forEach((it) => {
+        updated[it.index] = {
+          calificacion: it.defaultScore ?? (it.isInformative ? '' : it.maxPoints),
+          observaciones: prev[it.index]?.observaciones || '',
+        };
+      });
+      return updated;
     });
-    setItemsData(updated);
     showToast('Todos los rubros se marcaron con cumplimiento óptimo.');
   };
 
   const handleClearObservations = () => {
-    const updated: typeof itemsData = {};
-    ZOHO_CHECKLIST_ITEMS.forEach((it) => {
-      updated[it.index] = {
-        calificacion: itemsData[it.index]?.calificacion ?? '',
-        observaciones: '',
-      };
+    const effectiveStation = (isAddingNewStation ? customStationName : selectedStation).trim();
+
+    setItemsData((prev) => {
+      const updated: typeof itemsData = {};
+      Object.keys(prev).forEach((k) => {
+        const idx = Number(k);
+        updated[idx] = {
+          calificacion: prev[idx]?.calificacion ?? '',
+          observaciones: '',
+        };
+      });
+      ZOHO_CHECKLIST_ITEMS.forEach((it) => {
+        updated[it.index] = {
+          calificacion: prev[it.index]?.calificacion ?? '',
+          observaciones: '',
+        };
+      });
+      try {
+        localStorage.setItem('evaluaciones_zoho_active_draft', JSON.stringify(updated));
+      } catch (e) {
+        console.error(e);
+      }
+      return updated;
     });
-    setItemsData(updated);
-    showToast('Observaciones limpiadas.');
+
+    setSavedCards({});
+
+    // Also clear notes in matching active/station audit in auditsHistory so exported Excel reflects cleared notes
+    if (effectiveStation) {
+      setAuditsHistory((prev) => {
+        let changed = false;
+        const next = prev.map((a) => {
+          const isMatch =
+            (activeAuditId && a.id === activeAuditId) ||
+            (a.estacion.trim().toLowerCase() === effectiveStation.toLowerCase() &&
+              a.mes === mes &&
+              a.anio === anio);
+          if (!isMatch) return a;
+          changed = true;
+          return {
+            ...a,
+            observacionesCount: 0,
+            items: a.items.map((it) => ({ ...it, observaciones: '' })),
+          };
+        });
+        if (changed) {
+          try {
+            localStorage.setItem(STORAGE_KEY_AUDITS, JSON.stringify(next));
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+
+    showToast('✓ Todas las notas y respuestas seleccionadas fueron limpiadas.');
   };
 
   const handleResetForm = () => {
@@ -308,6 +473,8 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
       };
     });
     setItemsData(initial);
+    setActiveAuditId(null);
+    setSavedCards({});
     try {
       localStorage.removeItem('evaluaciones_zoho_active_draft');
     } catch (e) {
@@ -348,44 +515,24 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
     setIsSaving(true);
 
     try {
-      // Build the ZohoAuditRecord
-      const auditItems: ZohoAuditItem[] = ZOHO_CHECKLIST_ITEMS.map((def) => {
-        const userEntry = itemsData[def.index] || {
-          calificacion: def.defaultScore ?? (def.isInformative ? '' : def.maxPoints),
-          observaciones: '',
-        };
-        return {
-          puntoIndex: def.index,
-          id: def.id,
-          rubroId: def.rubroId,
-          rubroName: def.rubroName,
-          punto: def.punto,
-          calificacion: userEntry.calificacion,
-          observaciones: userEntry.observaciones.trim(),
-          maxPoints: def.maxPoints,
-          isInformative: def.isInformative,
-        };
-      });
-
-      const auditRecord: ZohoAuditRecord = {
-        id: `zoho-aud-${Date.now()}`,
-        fecha,
-        hora,
-        auditor: auditor.trim(),
-        estacion: effectiveStation,
-        ciudad: ciudad.trim() || 'Sinaloa',
-        mes,
-        anio,
-        overallScore: scoreSummary.scorePct,
-        estatus: scoreSummary.estatus,
-        observacionesCount: scoreSummary.obsCount,
-        items: auditItems,
-        createdAt: new Date().toISOString(),
-      };
+      const existingAudit = auditsHistory.find(
+        (a) =>
+          (activeAuditId && a.id === activeAuditId) ||
+          (a.estacion.trim().toLowerCase() === effectiveStation.toLowerCase() &&
+            a.mes === mes &&
+            a.anio === anio)
+      );
+      const auditRecord = buildAuditRecordFromItems(
+        itemsData,
+        effectiveStation,
+        existingAudit?.id || activeAuditId
+      );
+      setActiveAuditId(auditRecord.id);
 
       // Convert items to 54 StationEvaluationRecord objects for central system
-      const evaluationRecords: StationEvaluationRecord[] = auditItems.map((item) => ({
-        id: `zoho-${Date.now()}-${item.puntoIndex}-${Math.random().toString(36).slice(2, 6)}`,
+      // Keep observaciones as string (including '') so cleared notes overwrite old ones in App.tsx & Supabase
+      const evaluationRecords: StationEvaluationRecord[] = auditRecord.items.map((item) => ({
+        id: `zoho-${effectiveStation.replace(/[^a-zA-Z0-9_-]/g, '_')}-${mes}-${anio}-${item.puntoIndex}`,
         concatenar: `${effectiveStation}${mes}${item.punto}`,
         ciudad: ciudad.trim() || 'Sinaloa',
         estacion: effectiveStation,
@@ -394,7 +541,7 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
         punto: item.punto,
         calificacion: item.calificacion,
         rubroId: item.rubroId,
-        observaciones: item.observaciones || undefined,
+        observaciones: item.observaciones ?? '',
         inspectorSubmittedAt: `${fecha} ${hora}`,
         inspectorUser: auditor.trim(),
       }));
@@ -402,18 +549,12 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
       // Call system save (persists to Supabase and records in App.tsx)
       const res = await onSaveAuditToSystem(auditRecord, evaluationRecords);
 
-      // Save in Zoho audits history
-      const updatedHistory = [auditRecord, ...auditsHistory];
-      setAuditsHistory(updatedHistory);
-      try {
-        localStorage.setItem(STORAGE_KEY_AUDITS, JSON.stringify(updatedHistory));
-      } catch (e) {
-        console.error(e);
-      }
+      // Save/Update in Zoho audits history
+      upsertAuditHistory(auditRecord);
 
       if (res && res.success) {
         showToast(
-          `¡Inspección de "${effectiveStation}" guardada con éxito! (${scoreSummary.scorePct}% - ${scoreSummary.estatus})`
+          `¡Inspección de "${effectiveStation}" guardada con éxito! (${auditRecord.overallScore}% - ${auditRecord.estatus})`
         );
       } else {
         showToast(
@@ -431,6 +572,18 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
     }
   };
 
+  // Export directly from current Formulario state without losing unsaved/card responses
+  const handleExportCurrentForm = (format: 'xlsx' | 'csv' = 'xlsx') => {
+    const effectiveStation = (isAddingNewStation ? customStationName : selectedStation).trim();
+    if (!effectiveStation) {
+      showToast('Por favor selecciona o escribe el nombre de la estación para exportar.');
+      return;
+    }
+    const liveAudit = buildAuditRecordFromItems(itemsData, effectiveStation, activeAuditId);
+    upsertAuditHistory(liveAudit);
+    handleExportAudit(liveAudit, format);
+  };
+
   // Delete audit from history
   const handleDeleteAudit = (auditId: string) => {
     if (!window.confirm('¿Deseas eliminar esta inspección del historial de Formulario Estaciones?')) return;
@@ -441,6 +594,9 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
     } catch {}
     if (viewingAuditDetail?.id === auditId) {
       setViewingAuditDetail(null);
+    }
+    if (activeAuditId === auditId) {
+      setActiveAuditId(null);
     }
     showToast('Auditoría eliminada del historial.');
   };
@@ -455,12 +611,13 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
     setMes(audit.mes);
     setAnio(audit.anio);
     setIsAddingNewStation(false);
+    setActiveAuditId(audit.id);
 
     const reloaded: typeof itemsData = {};
     audit.items.forEach((item) => {
       reloaded[item.puntoIndex] = {
-        calificacion: item.calificacion,
-        observaciones: item.observaciones,
+        calificacion: item.calificacion !== undefined && item.calificacion !== null ? item.calificacion : '',
+        observaciones: item.observaciones || '',
       };
     });
     setItemsData(reloaded);
@@ -502,7 +659,7 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
         audit.mes,
         audit.anio,
         item.punto,
-        item.calificacion,
+        item.calificacion !== undefined && item.calificacion !== null ? item.calificacion : '',
         item.observaciones || '',
       ]);
     });
@@ -560,7 +717,7 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
           audit.mes,
           audit.anio,
           item.punto,
-          item.calificacion,
+          item.calificacion !== undefined && item.calificacion !== null ? item.calificacion : '',
           item.observaciones || '',
         ]);
       });
@@ -879,8 +1036,20 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
                 type="button"
                 onClick={handleClearObservations}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer"
+                title="Borrar todas las notas y respuestas seleccionadas del formulario"
               >
+                <Trash2 className="w-3.5 h-3.5 text-neutral-500" />
                 <span>Limpiar Notas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExportCurrentForm('xlsx')}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors cursor-pointer"
+                title="Exportar a Excel las respuestas y calificaciones seleccionadas actualmente"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Exportar Excel</span>
               </button>
 
               <button
@@ -964,7 +1133,7 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
                     <div className="divide-y divide-neutral-100 p-2 sm:p-4 space-y-3">
                       {rubroItems.map((item) => {
                         const current = itemsData[item.index] || {
-                          calificacion: item.defaultScore ?? 0,
+                          calificacion: item.defaultScore ?? '',
                           observaciones: '',
                         };
 
@@ -1277,20 +1446,31 @@ export const ZohoModule: React.FC<ZohoModuleProps> = ({
           </div>
 
           {/* Bottom Save Bar */}
-          <div className="p-4 bg-white rounded-xl border border-neutral-200 shadow-sm flex items-center justify-between gap-4">
+          <div className="p-4 bg-white rounded-xl border border-neutral-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
             <div className="text-xs text-neutral-600">
               Al guardar, se registrarán los <strong>54 puntos normativos</strong> en el historial de Formulario Estaciones y en la Base de Datos Centralizada con el formato original.
             </div>
 
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={handleSaveAudit}
-              className="inline-flex items-center gap-2 px-6 py-2.5 bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg shadow-sm transition-all disabled:opacity-50 cursor-pointer"
-            >
-              <Save className="w-4 h-4 text-emerald-400" />
-              <span>{isSaving ? 'Guardando en Base de Datos...' : 'Guardar Inspección Completa'}</span>
-            </button>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => handleExportCurrentForm('xlsx')}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold rounded-lg transition-all cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                <span>Exportar Excel</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={handleSaveAudit}
+                className="inline-flex items-center gap-2 px-6 py-2.5 bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-bold rounded-lg shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+              >
+                <Save className="w-4 h-4 text-emerald-400" />
+                <span>{isSaving ? 'Guardando en Base de Datos...' : 'Guardar Inspección Completa'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

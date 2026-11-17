@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { MonthName, MONTHS, StationEvaluationRecord, RubroItem, MultiSectionData } from '../types';
 import { RUBRO_ITEMS, RUBROS_META } from '../data/initialData';
-import { calculateSectionStats, calculateStationOverall } from './evaluationFormulas';
+import { calculateSectionStats, calculateStationOverall, isMatchingRubroItem } from './evaluationFormulas';
 
 // Helper to trigger browser file download reliably across all browsers and iframes
 export const downloadWorkbook = (wb: XLSX.WorkBook, fileName: string) => {
@@ -120,9 +120,7 @@ export const exportModule1ToExcel = (
       // Find monthly ratings for this station & item
       const monthScores = MONTHS.map((m) => {
         const rec = stationRecords.find(
-          (r) =>
-            r.mes === m &&
-            r.punto.toLowerCase().includes(item.description.slice(0, 25).toLowerCase())
+          (r) => r.mes === m && isMatchingRubroItem(r.punto, item)
         );
         return rec !== undefined ? rec.calificacion : '';
       });
@@ -261,8 +259,6 @@ export const exportModule3ToExcel = (
 
   RUBRO_ITEMS.forEach((item) => {
     const row: (string | number)[] = [item.id, item.description, item.maxPoints];
-    const itemIdLower = (item.id || '').toLowerCase();
-    const itemDescLower = (item.description || '').slice(0, 20).toLowerCase();
 
     stationsToUse.forEach((st) => {
       const stLower = (st || '').trim().toLowerCase();
@@ -276,8 +272,7 @@ export const exportModule3ToExcel = (
 
         if (targetYearNum && Number(r.anio) !== targetYearNum) return false;
 
-        const rPunto = (r.punto || '').toString().toLowerCase();
-        return (itemIdLower && rPunto.includes(itemIdLower)) || (itemDescLower && rPunto.includes(itemDescLower));
+        return isMatchingRubroItem(r.punto, item);
       });
       row.push(match !== undefined ? match.calificacion : '');
     });
@@ -355,7 +350,7 @@ export const exportModule3ToExcel = (
   const recordsToExport = matchingRecords.length > 0 ? matchingRecords : records;
 
   const dbSheetData = [
-    ['CONCATENAR', 'CIUDAD', 'ESTACION', 'MES DE REVISION', 'AÑO', 'PUNTO A REVISAR', 'CALIFICACION'],
+    ['CONCATENAR', 'CIUDAD', 'ESTACION', 'MES DE REVISION', 'AÑO', 'PUNTO A REVISAR', 'CALIFICACION', 'OBSERVACIONES'],
     ...recordsToExport.map((r) => [
       r.concatenar || `${r.estacion || ''}${r.mes || ''}${r.punto || ''}`,
       r.ciudad || 'Sinaloa - Mochis',
@@ -363,7 +358,8 @@ export const exportModule3ToExcel = (
       r.mes || selectedMonth,
       r.anio || selectedYear,
       r.punto || '',
-      r.calificacion !== undefined ? r.calificacion : 0,
+      r.calificacion !== undefined && r.calificacion !== null ? r.calificacion : '',
+      r.observaciones || '',
     ]),
   ];
 
@@ -376,6 +372,7 @@ export const exportModule3ToExcel = (
     { wch: 8 },
     { wch: 65 },
     { wch: 14 },
+    { wch: 45 },
   ];
   XLSX.utils.book_append_sheet(wb, wsDb, 'Base Evaluaciones');
 
@@ -426,7 +423,7 @@ export const exportModule3DatabaseOnlyToExcel = (
   const recordsToExport = matchingRecords.length > 0 ? matchingRecords : records;
 
   const wsData = [
-    ['CONCATENAR', 'CIUDAD', 'ESTACION', 'MES DE REVISION', 'AÑO', 'PUNTO A REVISAR', 'CALIFICACION'],
+    ['CONCATENAR', 'CIUDAD', 'ESTACION', 'MES DE REVISION', 'AÑO', 'PUNTO A REVISAR', 'CALIFICACION', 'OBSERVACIONES'],
     ...recordsToExport.map((r) => [
       r.concatenar || `${r.estacion || ''}${r.mes || ''}${r.punto || ''}`,
       r.ciudad || 'Sinaloa - Mochis',
@@ -434,7 +431,8 @@ export const exportModule3DatabaseOnlyToExcel = (
       r.mes || selectedMonth,
       r.anio || selectedYear,
       r.punto || '',
-      r.calificacion !== undefined ? r.calificacion : 0,
+      r.calificacion !== undefined && r.calificacion !== null ? r.calificacion : '',
+      r.observaciones || '',
     ]),
   ];
 
@@ -447,6 +445,7 @@ export const exportModule3DatabaseOnlyToExcel = (
     { wch: 8 },
     { wch: 65 },
     { wch: 14 },
+    { wch: 45 },
   ];
 
   XLSX.utils.book_append_sheet(wb, ws, 'BD Evaluaciones');
@@ -1070,10 +1069,7 @@ export async function parseMultiSectionExcel(
     ];
 
     est1Records = recsToUse.map((r, idx) => {
-      const rubroMatch = RUBRO_ITEMS.find((it) =>
-        r.punto.toLowerCase().includes(it.id.toLowerCase()) ||
-        r.punto.toLowerCase().includes(it.description.slice(0, 20).toLowerCase())
-      );
+      const rubroMatch = RUBRO_ITEMS.find((it) => isMatchingRubroItem(r.punto, it));
       const normaLabel = rubroMatch ? `${rubroMatch.rubroName} (${rubroMatch.norma})` : 'Criterio Operativo';
       const isNA = String(r.calificacion).trim().toUpperCase() === 'N/A';
       const numVal = Number(r.calificacion);
@@ -1113,13 +1109,9 @@ export async function parseMultiSectionExcel(
 
     const rubroSummaryRows = RUBROS_META.map((meta) => {
       const items = RUBRO_ITEMS.filter((i) => i.rubroId === meta.id);
-      const matchingRecs = bdRecords.filter((r) => {
-        const pLower = r.punto.toLowerCase();
-        return items.some((it) =>
-          pLower.includes(it.id.toLowerCase()) ||
-          pLower.includes(it.description.slice(0, 20).toLowerCase())
-        );
-      });
+      const matchingRecs = bdRecords.filter((r) =>
+        items.some((it) => isMatchingRubroItem(r.punto, it))
+      );
 
       let obt = 0;
       let evaluatedCount = 0;
@@ -1393,7 +1385,7 @@ export function exportMultiSectionDataToExcel(data: MultiSectionData, fileName =
 
   // Hoja 1: BD
   const bdData = [
-    ['CONCATENAR', 'CIUDAD', 'ESTACION', 'MES DE REVISION', 'AÑO', 'PUNTO A REVISAR', 'CALIFICACION'],
+    ['CONCATENAR', 'CIUDAD', 'ESTACION', 'MES DE REVISION', 'AÑO', 'PUNTO A REVISAR', 'CALIFICACION', 'OBSERVACIONES'],
     ...data.bdRecords.map((r) => [
       r.concatenar,
       r.ciudad,
@@ -1402,6 +1394,7 @@ export function exportMultiSectionDataToExcel(data: MultiSectionData, fileName =
       r.anio,
       r.punto,
       r.calificacion,
+      r.observaciones || '',
     ]),
   ];
   const wsBD = XLSX.utils.aoa_to_sheet(bdData);
